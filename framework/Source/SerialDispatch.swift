@@ -64,6 +64,7 @@ func runOnMainQueue<T>(_ mainThreadOperation:() -> T) -> T {
 public protocol SerialDispatch {
     var serialDispatchQueue:DispatchQueue { get }
     var dispatchQueueKey:DispatchSpecificKey<Int> { get }
+    var dispatchQueueKeyValue:Int { get }
     func makeCurrentContext()
 }
 
@@ -77,7 +78,7 @@ public extension SerialDispatch {
     
     public func runOperationSynchronously(_ operation:() -> ()) {
         // TODO: Verify this works as intended
-        if (DispatchQueue.getSpecific(key:self.dispatchQueueKey) == 81) {
+        if (DispatchQueue.getSpecific(key:self.dispatchQueueKey) == self.dispatchQueueKeyValue) {
             operation()
         } else {
             self.serialDispatchQueue.sync {
