@@ -63,6 +63,12 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                         captureSession.addInput(videoInput)
                     }
 
+                    for connection in videoOutput.connections {
+                        if(connection.isVideoMirroringSupported) {
+                            connection.isVideoMirrored = (location == .frontFacingMirrored)
+                        }
+                    }
+
                     captureSession.commitConfiguration()
 
                 } catch {
