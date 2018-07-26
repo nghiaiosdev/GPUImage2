@@ -11,7 +11,8 @@
     s.resources = 'framework/Source/Operations/Shaders/*.{fsh}'
     s.requires_arc = true
     s.xcconfig = { 'CLANG_MODULES_AUTOLINK' => 'YES',
-                          'OTHER_SWIFT_FLAGS' => "$(inherited) -DGLES"}
+                          'OTHER_SWIFT_FLAGS' => "$(inherited) -DGLES",
+                          'SWIFT_OBJC_BRIDGING_HEADER' => 'framework/Source/GPUImage-Bridging-Header.h'}
 
     s.ios.deployment_target = '8.0'
     s.ios.exclude_files = 'framework/Source/Mac', 'framework/Source/Linux', 'framework/Source/Operations/Shaders/ConvertedShaders_GL.swift'
