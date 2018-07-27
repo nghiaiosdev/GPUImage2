@@ -13,8 +13,8 @@ public enum PhysicalCameraLocation {
     func imageOrientation() -> ImageOrientation {
         switch self {
             case .backFacing: return .landscapeRight
-            case .frontFacing: return .landscapeLeft
-            case .frontFacingMirrored: return .landscapeLeft
+            case .frontFacing: return .landscapeRight
+            case .frontFacingMirrored: return .landscapeRight
         }
     }
     
