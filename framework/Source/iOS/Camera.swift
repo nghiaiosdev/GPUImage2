@@ -13,8 +13,8 @@ public enum PhysicalCameraLocation {
     func imageOrientation() -> ImageOrientation {
         switch self {
             case .backFacing: return .landscapeRight
-            case .frontFacing: return .landscapeRight
-            case .frontFacingMirrored: return .landscapeRight
+            case .frontFacing: return .landscapeLeft
+            case .frontFacingMirrored: return .landscapeLeft
         }
     }
     
@@ -59,6 +59,9 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                     if captureSession.canAddInput(newInput) {
                         captureSession.addInput(newInput)
                         videoInput = newInput
+                        inputCamera = device
+                        updateCameraFrameRate()
+                        
                     } else {
                         captureSession.addInput(videoInput)
                     }
@@ -77,6 +80,15 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
             }
         }
     }
+    
+    public var frameRate: Int = 25 {
+        didSet {
+            updateCameraFrameRate()
+        }
+    }
+    
+    public var isPaused: Bool = false
+    
     public var runBenchmark:Bool = false
     public var logFPS:Bool = false
     public var audioEncodingTarget:AudioEncodingTarget? {
@@ -96,7 +108,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     public let targets = TargetContainer()
     public weak var delegate: CameraDelegate?
     public let captureSession:AVCaptureSession
-    public let inputCamera:AVCaptureDevice!
+    public var inputCamera:AVCaptureDevice!
     public var videoInput:AVCaptureDeviceInput!
     public let videoOutput:AVCaptureVideoDataOutput!
     public var microphone:AVCaptureDevice?
@@ -119,7 +131,12 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     
     var captureSessionRestartAttempts = 0
 
-    public init(sessionPreset:AVCaptureSession.Preset, cameraDevice:AVCaptureDevice? = nil, location:PhysicalCameraLocation = .backFacing, captureAsYUV:Bool = true) throws {
+    public init(sessionPreset:AVCaptureSession.Preset,
+                cameraDevice:AVCaptureDevice? = nil,
+                location:PhysicalCameraLocation = .backFacing,
+                frameRate: Int = 25,
+                captureAsYUV:Bool = true) throws {
+        
         self.location = location
         self.captureAsYUV = captureAsYUV
 
@@ -150,6 +167,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
             super.init()
             throw error
         }
+        
         if (captureSession.canAddInput(videoInput)) {
             captureSession.addInput(videoInput)
         }
@@ -195,6 +213,8 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
 
         super.init()
         
+        self.frameRate = frameRate
+        
         videoOutput.setSampleBufferDelegate(self, queue:cameraProcessingQueue)
         
         NotificationCenter.default.addObserver(self, selector: #selector(Camera.captureSessionRuntimeError(note:)), name: NSNotification.Name.AVCaptureSessionRuntimeError, object: nil)
@@ -210,6 +230,24 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     }
     
 
+    private func updateCameraFrameRate() {
+        guard
+            let captureDevice = inputCamera,
+            let range = captureDevice.activeFormat.videoSupportedFrameRateRanges.first else { return }
+        
+        do {
+            try captureDevice.lockForConfiguration()
+            
+            let rate = Int32(max(min(Float64(frameRate), range.maxFrameRate), range.minFrameRate))
+            
+            captureDevice.activeVideoMinFrameDuration = CMTimeMake(1, rate)
+            captureDevice.activeVideoMaxFrameDuration = CMTimeMake(1, rate)
+            captureDevice.unlockForConfiguration()
+        } catch {
+            debugPrint("An Error occurred: \(error.localizedDescription))")
+        }
+    }
+    
     @objc func captureSessionRuntimeError(note: NSNotification) {
         print("ERROR: Capture session runtime error: \(String(describing: note.userInfo))")
         if(self.captureSessionRestartAttempts < 1) {
@@ -225,6 +263,8 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     }
     
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard !isPaused else { return }
+        
         guard (output != audioOutput) else {
             self.processAudioSampleBuffer(sampleBuffer)
             return
@@ -240,8 +280,10 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         
         CVPixelBufferLockBaseAddress(cameraFrame, CVPixelBufferLockFlags(rawValue:CVOptionFlags(0)))
+        
         sharedImageProcessingContext.runOperationAsynchronously{
             let cameraFramebuffer:Framebuffer
+            let orientation = self.location.imageOrientation()
             
             self.delegate?.didCaptureBuffer(sampleBuffer)
             
@@ -272,7 +314,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                     glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_T), GL_CLAMP_TO_EDGE)
 
                     luminanceFramebuffer = try! Framebuffer(context:sharedImageProcessingContext,
-                                                            orientation:self.location.imageOrientation(),
+                                                            orientation:orientation,
                                                             size:GLSize(width:GLint(bufferWidth), height:GLint(bufferHeight)),
                                                             textureOnly:true,
                                                             overriddenTexture:luminanceTexture)
@@ -299,7 +341,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                     glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_T), GL_CLAMP_TO_EDGE)
 
                     chrominanceFramebuffer = try! Framebuffer(context:sharedImageProcessingContext,
-                                                              orientation:self.location.imageOrientation(),
+                                                              orientation:orientation,
                                                               size:GLSize(width:GLint(bufferWidth / 2), height:GLint(bufferHeight / 2)),
                                                               textureOnly:true,
                                                               overriddenTexture:chrominanceTexture)
@@ -307,7 +349,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                     glActiveTexture(GLenum(GL_TEXTURE4))
                     
                     luminanceFramebuffer = sharedImageProcessingContext.framebufferCache
-                        .requestFramebufferWithProperties(orientation:self.location.imageOrientation(),
+                        .requestFramebufferWithProperties(orientation:orientation,
                                                           size:GLSize(width:GLint(bufferWidth), height:GLint(bufferHeight)),
                                                           textureOnly:true)
                     luminanceFramebuffer.lock()
@@ -318,7 +360,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                     glActiveTexture(GLenum(GL_TEXTURE5))
                     
                     chrominanceFramebuffer = sharedImageProcessingContext.framebufferCache
-                        .requestFramebufferWithProperties(orientation:self.location.imageOrientation(),
+                        .requestFramebufferWithProperties(orientation:orientation,
                                                           size:GLSize(width:GLint(bufferWidth / 2), height:GLint(bufferHeight / 2)),
                                                           textureOnly:true)
 
@@ -349,7 +391,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
                 
             } else {
                 cameraFramebuffer = sharedImageProcessingContext.framebufferCache
-                    .requestFramebufferWithProperties(orientation:self.location.imageOrientation(),
+                    .requestFramebufferWithProperties(orientation:orientation,
                                                       size:GLSize(width:GLint(bufferWidth), height:GLint(bufferHeight)),
                                                       textureOnly:true)
                 
